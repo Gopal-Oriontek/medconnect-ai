@@ -1,0 +1,288 @@
+// Medical Review Platform Database Schema
+
+generator client {
+    provider = "prisma-client-js"
+    binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
+    output = "/home/ubuntu/medical_review_platform/app/node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// NextAuth.js required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Main application models
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String?
+  emailVerified DateTime?
+  image         String?
+  phone         String?
+  role          UserRole  @default(CUSTOMER)
+  isActive      Boolean   @default(true)
+  specialization String? // For reviewers
+  licenseNumber  String? // For reviewers
+  bio           String?  // For reviewers
+  hourlyRate    Float?   // For reviewers
+  availableSlots Json?   // For reviewers - time slots
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  customerOrders Order[] @relation("CustomerOrders")
+  reviewerOrders Order[] @relation("ReviewerOrders")
+  reviews       Review[]
+  customerConsultations Consultation[] @relation("CustomerConsultations")
+  reviewerConsultations Consultation[] @relation("ReviewerConsultations")
+  notifications Notification[]
+  uploadedDocuments Document[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  orderNumber   String      @unique
+  customerId    String
+  reviewerId    String?
+  productType   ProductType @default(SECOND_OPINION)
+  title         String
+  description   String?
+  status        OrderStatus @default(PENDING_REVIEW)
+  priority      Priority    @default(MEDIUM)
+  totalAmount   Float
+  paidAmount    Float       @default(0)
+  dueDate       DateTime?
+  assignedAt    DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  customer      User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  reviewer      User?         @relation("ReviewerOrders", fields: [reviewerId], references: [id])
+  documents     Document[]
+  reviews       Review[]
+  payments      Payment[]
+  consultations Consultation[]
+  notifications Notification[]
+
+  @@index([customerId])
+  @@index([reviewerId])
+  @@index([status])
+  @@index([orderNumber])
+}
+
+model Document {
+  id           String      @id @default(cuid())
+  orderId      String
+  fileName     String
+  originalName String
+  fileSize     Int
+  fileType     String
+  filePath     String
+  uploadedBy   String
+  isActive     Boolean     @default(true)
+  downloadCount Int        @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  order        Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  uploader     User        @relation(fields: [uploadedBy], references: [id])
+
+  @@index([orderId])
+  @@index([uploadedBy])
+}
+
+model Review {
+  id            String       @id @default(cuid())
+  orderId       String
+  reviewerId    String
+  title         String
+  content       String       @db.Text
+  recommendations String?    @db.Text
+  severity      Severity     @default(MEDIUM)
+  isComplete    Boolean      @default(false)
+  reviewTime    Int?         // Time spent in minutes
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewer      User         @relation(fields: [reviewerId], references: [id])
+
+  @@index([orderId])
+  @@index([reviewerId])
+}
+
+model Consultation {
+  id               String            @id @default(cuid())
+  orderId          String
+  customerId       String
+  reviewerId       String
+  scheduledDate    DateTime
+  duration         Int               @default(60) // minutes
+  status           ConsultationStatus @default(SCHEDULED)
+  meetingLink      String?
+  notes            String?           @db.Text
+  customerNotes    String?           @db.Text
+  reviewerNotes    String?           @db.Text
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  order            Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer         User              @relation("CustomerConsultations", fields: [customerId], references: [id])
+  reviewer         User              @relation("ReviewerConsultations", fields: [reviewerId], references: [id])
+
+  @@index([orderId])
+  @@index([customerId])
+  @@index([reviewerId])
+  @@index([scheduledDate])
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  orderId         String
+  amount          Float
+  currency        String        @default("USD")
+  status          PaymentStatus @default(PENDING)
+  paymentMethod   String?
+  transactionId   String?
+  stripePaymentId String?
+  paypalPaymentId String?
+  metadata        Json?
+  processedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+  @@index([transactionId])
+}
+
+model Notification {
+  id          String           @id @default(cuid())
+  userId      String
+  orderId     String?
+  title       String
+  message     String           @db.Text
+  type        NotificationType
+  isRead      Boolean          @default(false)
+  isEmailSent Boolean          @default(false)
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order       Order?           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([type])
+}
+
+// Enums
+enum UserRole {
+  CUSTOMER
+  REVIEWER
+  ADMIN
+}
+
+enum ProductType {
+  SECOND_OPINION
+  CONSULTATION
+  DOCUMENT_REVIEW
+  EXPERT_ANALYSIS
+}
+
+enum OrderStatus {
+  PENDING_REVIEW
+  ASSIGNED
+  IN_PROGRESS
+  UNDER_REVIEW
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ConsultationStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum NotificationType {
+  ORDER_CREATED
+  ORDER_ASSIGNED
+  ORDER_UPDATED
+  REVIEW_COMPLETED
+  CONSULTATION_SCHEDULED
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  DOCUMENT_UPLOADED
+  GENERAL
+}
